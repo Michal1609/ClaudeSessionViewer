@@ -34,7 +34,16 @@ No installation or build step needed – just open `claude-token-viewer.html` di
 
 Plain HTML/CSS/JavaScript with no dependencies and no build step – a single file you can just download and open.
 
-## Screenshot
+## Screenshots
 
-<!-- Add a screenshot of the app here, e.g.: -->
-<!-- ![Screenshot](screenshot.png) -->
+**Session dashboard** – cost breakdown, summary tiles, and the agent table:
+
+![Session dashboard](images/1.png)
+
+**Agent detail** – context window growth over a subagent's run, with a cost/benefit verdict:
+
+![Agent detail](images/2.png)
+
+**Conversation view** – full browsable transcript, including tool calls, tool results, and thinking blocks:
+
+![Conversation view](images/3.png)
