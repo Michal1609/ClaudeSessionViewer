@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code – analýza tokenů a subagentů</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;  /* blue    */
+    --series-2:       #eb6834;  /* orange  */
+    --series-3:       #1baf7a;  /* aqua    */
+    --series-4:       #eda100;  /* yellow  */
+    --good:           #006300;
+    --hover-wash:     rgba(11,11,11,0.045);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+      --series-4:       #c98500;
+      --good:           #0ca30c;
+      --hover-wash:     rgba(255,255,255,0.06);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--page); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px; line-height: 1.45;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 28px 0 10px; }
+  h3 { font-size: 14px; margin: 18px 0 8px; }
+  .sub { color: var(--text-secondary); margin: 0 0 18px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-bottom: 16px;
+  }
+  button, .btn {
+    background: var(--series-1); color: #fff; border: none;
+    padding: 8px 16px; border-radius: 7px; font-size: 14px; cursor: pointer;
+    font-family: inherit;
+  }
+  button.secondary { background: transparent; color: var(--text-primary); border: 1px solid var(--baseline); }
+  button:hover { filter: brightness(1.08); }
+
+  /* stat tiles */
+  .tiles { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .tile {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 12px 16px; min-width: 160px; flex: 1 1 160px;
+  }
+  .tile .label { color: var(--text-secondary); font-size: 12px; }
+  .tile .value { font-size: 24px; font-weight: 650; margin-top: 2px; }
+  .tile .detail { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  .meter { height: 6px; background: var(--grid); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .meter > div { height: 100%; background: var(--series-1); border-radius: 3px; }
+
+  /* tables */
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  th { color: var(--text-secondary); font-weight: 600; font-size: 12px; white-space: nowrap; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr.clickable { cursor: pointer; }
+  tbody tr.clickable:hover { background: var(--hover-wash); }
+  tbody tr.selected { background: var(--hover-wash); outline: 2px solid var(--series-1); outline-offset: -2px; }
+  .agent-name { font-weight: 600; }
+  .agent-desc { color: var(--text-secondary); font-size: 12px; max-width: 340px;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .badge { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 9px;
+           border: 1px solid var(--baseline); color: var(--text-secondary); margin-left: 6px; }
+
+  /* charts */
+  .chart-wrap { overflow-x: auto; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 6px 0 10px; font-size: 12px; color: var(--text-secondary); }
+  .legend .key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  #tooltip {
+    position: fixed; pointer-events: none; z-index: 50; display: none;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.18);
+    max-width: 340px;
+  }
+  #tooltip .t-title { font-weight: 650; margin-bottom: 4px; }
+  #tooltip .row { display: flex; justify-content: space-between; gap: 16px; }
+  #tooltip .row span:last-child { font-variant-numeric: tabular-nums; }
+
+  /* conversation */
+  .msg { border: 1px solid var(--grid); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
+  .msg-head { display: flex; justify-content: space-between; gap: 10px; padding: 6px 12px;
+              font-size: 12px; color: var(--text-secondary); background: var(--hover-wash); }
+  .msg-body { padding: 8px 12px; white-space: pre-wrap; word-break: break-word; font-size: 13px; }
+  .msg.user  .msg-head strong { color: var(--series-2); }
+  .msg.assistant .msg-head strong { color: var(--series-1); }
+  details.block { margin: 4px 0; }
+  details.block > summary { cursor: pointer; color: var(--text-secondary); font-size: 12px; user-select: none; }
+  details.block pre {
+    margin: 6px 0 2px; padding: 8px 10px; background: var(--hover-wash);
+    border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 400px; overflow-y: auto;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .usage-badge { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  .note { color: var(--text-muted); font-size: 12px; }
+  .hidden { display: none; }
+  .sessions-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .session-card { cursor: pointer; }
+  .session-card:hover { background: var(--hover-wash); }
+  .session-card h3 { margin: 0 0 6px; }
+  .insight { border-left: 3px solid var(--series-1); padding: 8px 14px; margin: 8px 0; background: var(--hover-wash); border-radius: 0 8px 8px 0; }
+  .insight .verdict { font-weight: 650; }
+  .verdict.good { color: var(--good); }
+  a.backlink { color: var(--series-1); cursor: pointer; text-decoration: none; }
+  a.backlink:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>Claude Code – analýza tokenů a subagentů</h1>
+<p class="sub">Rozpad spotřeby tokenů (vstup, výstup, cache, kontextové okno) po hlavním běhu a jednotlivých subagentech, včetně odhadu ceny.</p>
+
+<div class="card" id="picker-card">
+  <p style="margin-top:0">Vyber složku projektu Claude Code (např. <code>c:\Users\micha\.claude\projects\d--Data-Michal-Develop-Work-Synapse</code>).
+  Aplikace načte hlavní <code>*.jsonl</code> soubory (sessions) a k nim podsložky <code>&lt;session&gt;/subagents/</code>. Vše probíhá lokálně v prohlížeči, nic se nikam neposílá.</p>
+  <button id="pick-folder">📁 Vybrat složku projektu</button>
+  <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden">
+  <span class="note" id="pick-status"></span>
+</div>
+
+<div id="sessions-section" class="hidden">
+  <h2>Sessions (hlavní běhy)</h2>
+  <div class="sessions-grid" id="sessions-list"></div>
+</div>
+
+<div id="dashboard" class="hidden">
+  <p><a class="backlink" id="back-to-sessions">← zpět na seznam sessions</a></p>
+  <h2 id="session-title"></h2>
+  <p class="sub" id="session-meta"></p>
+
+  <div class="tiles" id="session-tiles"></div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Cena podle agenta a nákladové složky</h3>
+    <div class="legend" id="cost-legend"></div>
+    <div class="chart-wrap" id="cost-chart"></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0">Agenti v této session <span class="note">(klikni na řádek pro detail a procházení konverzace)</span></h3>
+    <div class="chart-wrap">
+      <table id="agents-table">
+        <thead>
+          <tr>
+            <th>Agent</th><th>Model</th>
+            <th class="num">Volání&nbsp;API</th>
+            <th class="num">Vstup (necache)</th>
+            <th class="num">Cache zápis</th>
+            <th class="num">Cache čtení</th>
+            <th class="num">Výstup</th>
+            <th class="num">Špička okna</th>
+            <th class="num">Doba</th>
+            <th class="num">Cena</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="agent-detail" class="hidden">
+    <h2 id="agent-detail-title"></h2>
+    <div class="tiles" id="agent-tiles"></div>
+    <div id="agent-insight"></div>
+    <div class="card">
+      <h3 style="margin-top:0">Růst kontextového okna <span class="note">(co model „viděl" při každém volání API)</span></h3>
+      <div class="chart-wrap" id="ctx-chart"></div>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Konverzace <span class="note">(obsah kontextového okna)</span></h3>
+      <div id="conversation"></div>
+    </div>
+  </div>
+
+  <p class="note">Ceny jsou orientační přepočet podle veřejného API ceníku (USD/1M tokenů): Fable&nbsp;5 $10/$50, Opus&nbsp;5 a Opus&nbsp;4.6–4.8 $5/$25, Sonnet&nbsp;5 $2/$10 (zaváděcí cena do 31.&nbsp;8.&nbsp;2026, poté $3/$15), Sonnet&nbsp;4.5/4.6 $3/$15, Haiku&nbsp;4.5 $1/$5. Cache: čtení 0,1× vstupní ceny, zápis 1,25× (5min TTL) / 2× (1h TTL). U předplatného Claude Code se tokeny neúčtují přímo – čísla slouží k porovnání nákladnosti.</p>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+'use strict';
+
+/* ---------- ceník (USD za 1M tokenů: [vstup, výstup]) ---------- */
+const PRICING = {
+  'claude-fable-5':   [10, 50],
+  'claude-mythos-5':  [10, 50],
+  'claude-opus-5':    [5, 25],
+  'claude-opus-4-8':  [5, 25],
+  'claude-opus-4-7':  [5, 25],
+  'claude-opus-4-6':  [5, 25],
+  'claude-opus-4-5':  [5, 25],
+  'claude-sonnet-5':  [2, 10],   // zaváděcí cena platná k srpnu 2026
+  'claude-sonnet-4-6':[3, 15],
+  'claude-sonnet-4-5':[3, 15],
+  'claude-haiku-4-5': [1, 5],
+};
+const DEFAULT_PRICE = [5, 25];
+const MODEL_CTX = { 'claude-haiku-4-5': 200000 };  // ostatní modely 1M
+function modelCtx(model) { return MODEL_CTX[model] || 1000000; }
+function priceFor(model) {
+  if (PRICING[model]) return PRICING[model];
+  const key = Object.keys(PRICING).find(k => model && model.startsWith(k));
+  return key ? PRICING[key] : DEFAULT_PRICE;
+}
+function callCost(model, u) {
+  const [pin, pout] = priceFor(model);
+  return (u.input * pin + u.c5m * 1.25 * pin + u.c1h * 2 * pin
+        + u.cacheRead * 0.1 * pin + u.output * pout) / 1e6;
+}
+
+/* ---------- formátování ---------- */
+const nf = new Intl.NumberFormat('cs-CZ');
+function fmtTok(n) {
+  if (n == null) return '–';
+  return nf.format(Math.round(n));
+}
+function fmtTokShort(n) {
+  if (n >= 1e6) return (n/1e6).toLocaleString('cs-CZ', {maximumFractionDigits:2}) + ' M';
+  if (n >= 1e3) return Math.round(n/1e3) + ' k';
+  return String(Math.round(n));
+}
+function fmtCost(c) {
+  if (c === 0) return '$0';
+  if (c < 0.01) return '$' + c.toFixed(4);
+  return '$' + c.toFixed(2);
+}
+function fmtDur(ms) {
+  if (!ms || ms < 0) return '–';
+  const s = Math.round(ms/1000);
+  if (s < 60) return s + ' s';
+  const m = Math.floor(s/60), sec = s % 60;
+  if (m < 60) return m + ' min ' + String(sec).padStart(2,'0') + ' s';
+  const h = Math.floor(m/60);
+  return h + ' h ' + String(m%60).padStart(2,'0') + ' min';
+}
+function fmtDate(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString('cs-CZ') + ' ' + d.toLocaleTimeString('cs-CZ', {hour:'2-digit', minute:'2-digit'});
+}
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function shortModel(m) {
+  if (!m) return '?';
+  return m.replace(/^claude-/, '').replace(/-\d{8}$/, '');
+}
+
+/* ---------- parsování JSONL přepisu ---------- */
+function parseTranscript(text) {
+  const lines = text.split('\n');
+  const calls = new Map();       // messageId -> {model, usage, ts}
+  const messages = [];           // pro zobrazení konverzace
+  const agentToolUses = new Map();  // toolUseId -> {description, subagentType, prompt}
+  const toolUseNames = new Map();   // toolUseId -> jméno nástroje
+  const toolResults = new Map();    // toolUseId -> délka textu výsledku
+  const notifChars = new Map();     // toolUseId -> délka task-notification bloků (agenti na pozadí)
+  let title = null, firstTs = null, lastTs = null, slug = null;
+
+  const RX_NOTIF = /<task-notification>[\s\S]*?<\/task-notification>/g;
+  const RX_NOTIF_ID = /<tool-use-id>(toolu_[A-Za-z0-9]+)<\/tool-use-id>/;
+  function scanNotifications(text) {
+    if (!text || text.indexOf('<task-notification>') === -1) return;
+    let m;
+    RX_NOTIF.lastIndex = 0;
+    while ((m = RX_NOTIF.exec(text)) !== null) {
+      const idm = m[0].match(RX_NOTIF_ID);
+      if (idm) notifChars.set(idm[1], (notifChars.get(idm[1]) || 0) + m[0].length);
+    }
+  }
+
+  for (const line of lines) {
+    if (!line) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+
+    if (obj.type === 'ai-title' && obj.aiTitle) { title = obj.aiTitle; continue; }
+    if (obj.slug) slug = obj.slug;
+    if (obj.timestamp) {
+      const t = Date.parse(obj.timestamp);
+      if (!isNaN(t)) { if (firstTs === null) firstTs = t; lastTs = t; }
+    }
+    if (obj.type !== 'user' && obj.type !== 'assistant') continue;
+    const m = obj.message;
+    if (!m) continue;
+
+    if (obj.type === 'assistant') {
+      const u = m.usage;
+      if (u && m.id) {
+        let entry = calls.get(m.id);
+        if (!entry) {
+          const cc = u.cache_creation || null;
+          entry = {
+            model: m.model || '?',
+            input: u.input_tokens || 0,
+            c5m: cc ? (cc.ephemeral_5m_input_tokens || 0) : (u.cache_creation_input_tokens || 0),
+            c1h: cc ? (cc.ephemeral_1h_input_tokens || 0) : 0,
+            cacheRead: u.cache_read_input_tokens || 0,
+            output: 0,
+            ts: obj.timestamp ? Date.parse(obj.timestamp) : null,
+          };
+          calls.set(m.id, entry);
+        }
+        entry.output = Math.max(entry.output, u.output_tokens || 0);
+      }
+      // obsahové bloky – slučuj řádky se stejným message.id do jedné zprávy
+      const blocks = Array.isArray(m.content) ? m.content : [];
+      let msg = messages.length && messages[messages.length-1].role === 'assistant'
+                && messages[messages.length-1].id === m.id ? messages[messages.length-1] : null;
+      if (!msg) {
+        msg = { role: 'assistant', id: m.id, model: m.model, blocks: [], ts: obj.timestamp };
+        messages.push(msg);
+      }
+      for (const b of blocks) {
+        msg.blocks.push(b);
+        if (b.type === 'tool_use') {
+          toolUseNames.set(b.id, b.name);
+          if (b.name === 'Agent' || b.name === 'Task') {
+            agentToolUses.set(b.id, {
+              description: b.input && (b.input.description || ''),
+              subagentType: b.input && (b.input.subagent_type || ''),
+              prompt: b.input && (b.input.prompt || ''),
+            });
+          }
+        }
+      }
+    } else { // user
+      const content = m.content;
+      const msg = { role: 'user', blocks: [], ts: obj.timestamp };
+      if (typeof content === 'string') {
+        msg.blocks.push({ type: 'text', text: content });
+        scanNotifications(content);
+      } else if (Array.isArray(content)) {
+        for (const b of content) {
+          msg.blocks.push(b);
+          if (b.type === 'text') scanNotifications(b.text);
+          if (b.type === 'tool_result') {
+            let len = 0;
+            if (typeof b.content === 'string') len = b.content.length;
+            else if (Array.isArray(b.content)) {
+              for (const c of b.content) if (c.type === 'text' && c.text) len += c.text.length;
+            }
+            toolResults.set(b.tool_use_id, len);
+          }
+        }
+      }
+      if (msg.blocks.length) messages.push(msg);
+    }
+  }
+
+  // agregace přes unikátní volání API
+  const callList = [...calls.values()];
+  const agg = { input:0, c5m:0, c1h:0, cacheRead:0, output:0, cost:0, peakCtx:0, lastCtx:0, calls: callList.length };
+  const models = new Map();
+  for (const c of callList) {
+    agg.input += c.input; agg.c5m += c.c5m; agg.c1h += c.c1h;
+    agg.cacheRead += c.cacheRead; agg.output += c.output;
+    agg.cost += callCost(c.model, c);
+    const ctx = c.input + c.c5m + c.c1h + c.cacheRead;
+    c.ctx = ctx;
+    if (ctx > agg.peakCtx) agg.peakCtx = ctx;
+    agg.lastCtx = ctx;
+    models.set(c.model, (models.get(c.model) || 0) + 1);
+  }
+  const mainModel = [...models.entries()].sort((a,b) => b[1]-a[1]).map(e => e[0])[0] || '?';
+
+  return { calls: callList, agg, mainModel, messages, agentToolUses, toolUseNames, toolResults,
+           notifChars, title, slug, firstTs, lastTs };
+}
+
+/* ---------- stav aplikace ---------- */
+const state = { sessions: [], current: null, selectedAgent: null };
+
+/* ---------- výběr složky ---------- */
+const folderInput = document.getElementById('folder-input');
+document.getElementById('pick-folder').addEventListener('click', () => folderInput.click());
+folderInput.addEventListener('change', () => {
+  const files = [...folderInput.files];
+  const sessions = new Map();  // sessionId -> {mainFile, subFiles: Map(agentId -> {jsonl, meta}), dir}
+  const RX_MAIN = /(^|[\/\\])([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+  const RX_SUB  = /(^|[\/\\])([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})[\/\\]subagents[\/\\]agent-([0-9a-f]+)\.(jsonl|meta\.json)$/i;
+
+  for (const f of files) {
+    const p = f.webkitRelativePath || f.name;
+    let m = p.match(RX_MAIN);
+    if (m) {
+      const id = m[2].toLowerCase();
+      if (!sessions.has(id)) sessions.set(id, { id, mainFile: null, subFiles: new Map() });
+      sessions.get(id).mainFile = f;
+      continue;
+    }
+    m = p.match(RX_SUB);
+    if (m) {
+      const id = m[2].toLowerCase(), agentId = m[3], kind = m[4];
+      if (!sessions.has(id)) sessions.set(id, { id, mainFile: null, subFiles: new Map() });
+      const sf = sessions.get(id).subFiles;
+      if (!sf.has(agentId)) sf.set(agentId, {});
+      if (kind === 'jsonl') sf.get(agentId).jsonl = f; else sf.get(agentId).meta = f;
+    }
+  }
+
+  state.sessions = [...sessions.values()].filter(s => s.mainFile)
+    .sort((a,b) => b.mainFile.lastModified - a.mainFile.lastModified);
+  document.getElementById('pick-status').textContent =
+    ' Nalezeno sessions: ' + state.sessions.length;
+  renderSessionList();
+});
+
+async function readFileText(f) {
+  return await f.text();
+}
+
+/* ---------- seznam sessions ---------- */
+async function renderSessionList() {
+  const wrap = document.getElementById('sessions-list');
+  wrap.innerHTML = '';
+  document.getElementById('sessions-section').classList.remove('hidden');
+  document.getElementById('dashboard').classList.add('hidden');
+
+  for (const s of state.sessions) {
+    const card = document.createElement('div');
+    card.className = 'card session-card';
+    const sizeMB = (s.mainFile.size / 1048576).toLocaleString('cs-CZ', {maximumFractionDigits:1});
+    card.innerHTML =
+      '<h3>' + esc(s.id.slice(0,8)) + '…</h3>' +
+      '<div class="note">' + fmtDate(s.mainFile.lastModified) + ' · ' + sizeMB + ' MB · subagentů: ' + s.subFiles.size + '</div>' +
+      '<div class="session-title note" style="margin-top:6px">Načítám název…</div>';
+    card.addEventListener('click', () => loadSession(s));
+    wrap.appendChild(card);
+
+    // rychlá extrakce názvu bez plného parsování
+    readFileText(s.mainFile).then(text => {
+      s.text = text;
+      let title = null;
+      const rx = /"aiTitle":"((?:[^"\\]|\\.)*)"/g;
+      let m; while ((m = rx.exec(text)) !== null) title = m[1];
+      if (title) { try { title = JSON.parse('"' + title + '"'); } catch {} }
+      s.title = title;
+      const el = card.querySelector('.session-title');
+      el.textContent = title || '(bez názvu)';
+      el.classList.remove('note');
+      el.style.fontWeight = 600;
+    });
+  }
+}
+
+/* ---------- načtení session ---------- */
+async function loadSession(s) {
+  const text = s.text || await readFileText(s.mainFile);
+  const main = parseTranscript(text);
+
+  const agents = [];
+  agents.push({
+    kind: 'main', id: 'main',
+    name: 'Hlavní běh',
+    description: main.title || '',
+    subagentType: '',
+    data: main,
+  });
+
+  for (const [agentId, files] of s.subFiles) {
+    if (!files.jsonl) continue;
+    let meta = {};
+    if (files.meta) { try { meta = JSON.parse(await readFileText(files.meta)); } catch {} }
+    const data = parseTranscript(await readFileText(files.jsonl));
+    const link = meta.toolUseId ? main.agentToolUses.get(meta.toolUseId) : null;
+    agents.push({
+      kind: 'sub', id: agentId,
+      name: meta.agentType || (link && link.subagentType) || 'subagent',
+      description: meta.description || (link && link.description) || '',
+      subagentType: meta.agentType || '',
+      toolUseId: meta.toolUseId || null,
+      returnedChars: meta.toolUseId
+        ? (main.toolResults.get(meta.toolUseId) || 0) + (main.notifChars.get(meta.toolUseId) || 0)
+        : 0,
+      data,
+    });
+  }
+  // seřaď subagenty podle času zahájení
+  const subs = agents.slice(1).sort((a,b) => (a.data.firstTs||0) - (b.data.firstTs||0));
+  state.current = { session: s, main, agents: [agents[0], ...subs] };
+  state.selectedAgent = null;
+  renderDashboard();
+}
+
+/* ---------- dashboard ---------- */
+function renderDashboard() {
+  const cur = state.current;
+  document.getElementById('sessions-section').classList.add('hidden');
+  document.getElementById('dashboard').classList.remove('hidden');
+  document.getElementById('agent-detail').classList.add('hidden');
+  window.scrollTo(0, 0);
+
+  const main = cur.main;
+  document.getElementById('session-title').textContent = main.title || cur.session.id;
+  document.getElementById('session-meta').textContent =
+    cur.session.id + ' · ' + (main.firstTs ? fmtDate(main.firstTs) : '') +
+    (main.firstTs && main.lastTs ? ' · celková doba ' + fmtDur(main.lastTs - main.firstTs) : '');
+
+  // souhrnné dlaždice
+  let totCost = 0, totOut = 0, totRead = 0, totWrite = 0;
+  for (const a of cur.agents) {
+    totCost += a.data.agg.cost; totOut += a.data.agg.output;
+    totRead += a.data.agg.cacheRead; totWrite += a.data.agg.c5m + a.data.agg.c1h;
+  }
+  const ctxMax = modelCtx(main.mainModel);
+  const ctxPct = Math.min(100, main.agg.lastCtx / ctxMax * 100);
+
+  const tiles = document.getElementById('session-tiles');
+  tiles.innerHTML = '';
+  tiles.appendChild(tile('Celková cena (vč. subagentů)', fmtCost(totCost),
+    'hlavní běh ' + fmtCost(main.agg.cost) + ' · subagenti ' + fmtCost(totCost - main.agg.cost)));
+  const ctxTile = tile('Kontextové okno hlavního běhu', fmtTokShort(main.agg.lastCtx),
+    ctxPct.toLocaleString('cs-CZ',{maximumFractionDigits:1}) + ' % z ' + fmtTokShort(ctxMax) +
+    ' · špička ' + fmtTokShort(main.agg.peakCtx));
+  const meter = document.createElement('div');
+  meter.className = 'meter';
+  meter.innerHTML = '<div style="width:' + ctxPct + '%"></div>';
+  ctxTile.appendChild(meter);
+  tiles.appendChild(ctxTile);
+  tiles.appendChild(tile('Výstupní tokeny celkem', fmtTok(totOut),
+    'hlavní běh ' + fmtTok(main.agg.output)));
+  tiles.appendChild(tile('Cache čtení / zápis', fmtTokShort(totRead) + ' / ' + fmtTokShort(totWrite),
+    'čtení stojí 0,1× vstupní ceny'));
+  tiles.appendChild(tile('Subagentů', String(cur.agents.length - 1),
+    'volání API celkem: ' + cur.agents.reduce((s,a) => s + a.data.agg.calls, 0)));
+
+  renderCostChart();
+  renderAgentsTable();
+}
+
+function tile(label, value, detail) {
+  const d = document.createElement('div');
+  d.className = 'tile';
+  d.innerHTML = '<div class="label">' + esc(label) + '</div><div class="value">' + esc(value) + '</div>' +
+    (detail ? '<div class="detail">' + esc(detail) + '</div>' : '');
+  return d;
+}
+
+/* ---------- graf ceny (skládané vodorovné pruhy) ---------- */
+const COST_PARTS = [
+  { key: 'read',  label: 'Cache čtení',  cssVar: '--series-1' },
+  { key: 'write', label: 'Cache zápis',  cssVar: '--series-2' },
+  { key: 'input', label: 'Vstup (necache)', cssVar: '--series-3' },
+  { key: 'output',label: 'Výstup',       cssVar: '--series-4' },
+];
+function cssColor(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+function agentCostParts(a) {
+  const g = a.data.agg;
+  const [pin, pout] = priceFor(a.data.mainModel);
+  return {
+    read:  g.cacheRead * 0.1 * pin / 1e6,
+    write: (g.c5m * 1.25 * pin + g.c1h * 2 * pin) / 1e6,
+    input: g.input * pin / 1e6,
+    output: g.output * pout / 1e6,
+  };
+}
+
+function renderCostChart() {
+  const cur = state.current;
+  const wrap = document.getElementById('cost-chart');
+  const legend = document.getElementById('cost-legend');
+  legend.innerHTML = COST_PARTS.map(p =>
+    '<span><span class="key" style="background:var(' + p.cssVar + ')"></span>' + p.label + '</span>').join('');
+
+  const rows = cur.agents.map(a => ({ a, parts: agentCostParts(a), total: a.data.agg.cost }))
+                         .sort((x,y) => y.total - x.total);
+  const maxTotal = Math.max(...rows.map(r => r.total), 1e-9);
+
+  const labelW = 220, barMax = 560, rowH = 26, gap = 8, padTop = 4;
+  const W = labelW + barMax + 90;
+  const H = padTop + rows.length * (rowH + gap);
+  const surface = cssColor('--surface-1');
+
+  let svg = '<svg width="' + W + '" height="' + H + '" font-family="inherit" font-size="12">';
+  rows.forEach((r, i) => {
+    const y = padTop + i * (rowH + gap);
+    const name = (r.a.kind === 'main' ? 'Hlavní běh' : r.a.name) +
+                 (r.a.description && r.a.kind !== 'main' ? ' – ' + r.a.description : '');
+    const short = name.length > 34 ? name.slice(0, 33) + '…' : name;
+    svg += '<text x="' + (labelW - 8) + '" y="' + (y + rowH/2 + 4) + '" text-anchor="end" fill="' +
+           cssColor('--text-secondary') + '">' + esc(short) + '</text>';
+    let x = labelW;
+    for (const p of COST_PARTS) {
+      const w = r.parts[p.key] / maxTotal * barMax;
+      if (w < 0.5) continue;
+      svg += '<rect data-agent="' + i + '" x="' + x + '" y="' + y + '" width="' + Math.max(w,1) +
+             '" height="' + rowH + '" rx="3" fill="var(' + p.cssVar + ')" stroke="' + surface + '" stroke-width="2"></rect>';
+      x += w;
+    }
+    svg += '<text x="' + (x + 8) + '" y="' + (y + rowH/2 + 4) + '" fill="' + cssColor('--text-primary') +
+           '" font-variant-numeric="tabular-nums">' + fmtCost(r.total) + '</text>';
+  });
+  svg += '</svg>';
+  wrap.innerHTML = svg;
+
+  // tooltip s rozpadem
+  wrap.querySelectorAll('rect').forEach(rect => {
+    rect.addEventListener('mousemove', e => {
+      const r = rows[+rect.dataset.agent];
+      const name = r.a.kind === 'main' ? 'Hlavní běh' : (r.a.name + (r.a.description ? ' – ' + r.a.description : ''));
+      showTooltip(e,
+        '<div class="t-title">' + esc(name) + '</div>' +
+        COST_PARTS.map(p => '<div class="row"><span><span class="key" style="background:var(' + p.cssVar + ')"></span>' +
+          p.label + '</span><span>' + fmtCost(r.parts[p.key]) + '</span></div>').join('') +
+        '<div class="row" style="margin-top:4px;font-weight:650"><span>Celkem</span><span>' + fmtCost(r.total) + '</span></div>');
+    });
+    rect.addEventListener('mouseleave', hideTooltip);
+  });
+}
+
+/* ---------- tabulka agentů ---------- */
+function renderAgentsTable() {
+  const cur = state.current;
+  const tbody = document.querySelector('#agents-table tbody');
+  tbody.innerHTML = '';
+  cur.agents.forEach((a, idx) => {
+    const g = a.data.agg;
+    const tr = document.createElement('tr');
+    tr.className = 'clickable';
+    const dur = (a.data.firstTs && a.data.lastTs) ? a.data.lastTs - a.data.firstTs : null;
+    const nameHtml = a.kind === 'main'
+      ? '<div class="agent-name">Hlavní běh</div><div class="agent-desc">' + esc(a.description) + '</div>'
+      : '<div class="agent-name">' + esc(a.name) + '<span class="badge">subagent</span></div>' +
+        '<div class="agent-desc" title="' + esc(a.description) + '">' + esc(a.description) + '</div>';
+    tr.innerHTML =
+      '<td>' + nameHtml + '</td>' +
+      '<td>' + esc(shortModel(a.data.mainModel)) + '</td>' +
+      '<td class="num">' + g.calls + '</td>' +
+      '<td class="num">' + fmtTok(g.input) + '</td>' +
+      '<td class="num">' + fmtTok(g.c5m + g.c1h) + '</td>' +
+      '<td class="num">' + fmtTok(g.cacheRead) + '</td>' +
+      '<td class="num">' + fmtTok(g.output) + '</td>' +
+      '<td class="num">' + fmtTokShort(g.peakCtx) + '</td>' +
+      '<td class="num">' + fmtDur(dur) + '</td>' +
+      '<td class="num">' + fmtCost(g.cost) + '</td>';
+    tr.addEventListener('click', () => selectAgent(idx));
+    tbody.appendChild(tr);
+  });
+}
+
+/* ---------- detail agenta ---------- */
+function selectAgent(idx) {
+  state.selectedAgent = idx;
+  const cur = state.current;
+  const a = cur.agents[idx];
+  document.querySelectorAll('#agents-table tbody tr').forEach((tr, i) =>
+    tr.classList.toggle('selected', i === idx));
+
+  const det = document.getElementById('agent-detail');
+  det.classList.remove('hidden');
+  document.getElementById('agent-detail-title').textContent =
+    a.kind === 'main' ? 'Detail: Hlavní běh' : 'Detail: ' + a.name + (a.description ? ' – ' + a.description : '');
+
+  const g = a.data.agg;
+  const tiles = document.getElementById('agent-tiles');
+  tiles.innerHTML = '';
+  const ctxMax = modelCtx(a.data.mainModel);
+  tiles.appendChild(tile('Cena', fmtCost(g.cost), shortModel(a.data.mainModel)));
+  tiles.appendChild(tile('Špička kontextového okna', fmtTokShort(g.peakCtx),
+    (g.peakCtx / ctxMax * 100).toLocaleString('cs-CZ',{maximumFractionDigits:1}) + ' % z ' + fmtTokShort(ctxMax)));
+  tiles.appendChild(tile('Volání API', String(g.calls),
+    'výstup celkem ' + fmtTok(g.output) + ' tok.'));
+  tiles.appendChild(tile('Cache', fmtTokShort(g.cacheRead) + ' čtení',
+    'zápis ' + fmtTokShort(g.c5m + g.c1h) + (g.c1h ? ' (z toho 1h: ' + fmtTokShort(g.c1h) + ')' : '')));
+  const dur = (a.data.firstTs && a.data.lastTs) ? a.data.lastTs - a.data.firstTs : null;
+  tiles.appendChild(tile('Doba běhu', fmtDur(dur), a.data.firstTs ? fmtDate(a.data.firstTs) : ''));
+
+  renderInsight(a);
+  renderCtxChart(a);
+  renderConversation(a);
+  det.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+/* ---------- vyhodnocení přínosu subagenta ---------- */
+function renderInsight(a) {
+  const box = document.getElementById('agent-insight');
+  if (a.kind !== 'sub') { box.innerHTML = ''; return; }
+  const g = a.data.agg;
+  const retChars = a.returnedChars || 0;
+  const retTok = Math.round(retChars / 4);          // hrubý odhad ~4 znaky/token
+  const saved = Math.max(0, g.peakCtx - retTok);    // co nikdy nezatížilo hlavní okno
+  const ratio = g.peakCtx > 0 ? retTok / g.peakCtx : 0;
+  const per1k = retTok > 0 ? g.cost / (retTok / 1000) : null;
+
+  let verdict, cls;
+  if (ratio > 0 && ratio < 0.1) {
+    verdict = 'Výrazný přínos: do hlavního kontextu se vrátilo jen ' +
+      (ratio*100).toLocaleString('cs-CZ',{maximumFractionDigits:1}) +
+      ' % toho, co subagent zpracoval. Hlavní běh ušetřil ~' + fmtTokShort(saved) + ' tokenů okna.';
+    cls = 'good';
+  } else if (ratio < 0.3) {
+    verdict = 'Solidní přínos: kontext hlavního běhu byl zatížen jen ~' +
+      (ratio*100).toLocaleString('cs-CZ',{maximumFractionDigits:0}) + ' % zpracovaného objemu.';
+    cls = 'good';
+  } else if (retTok === 0) {
+    verdict = 'Výsledek se nepodařilo spárovat s hlavním během (chybí tool_result).';
+    cls = '';
+  } else {
+    verdict = 'Sporný přínos: subagent vrátil relativně velkou část toho, co zpracoval (' +
+      (ratio*100).toLocaleString('cs-CZ',{maximumFractionDigits:0}) +
+      ' %). Podobný objem by možná zvládl hlavní běh sám bez režie nového kontextu.';
+    cls = '';
+  }
+
+  box.innerHTML =
+    '<div class="insight">' +
+      '<div class="row-line">Subagent zpracoval kontext o špičce <strong>' + fmtTokShort(g.peakCtx) +
+      ' tokenů</strong> za <strong>' + fmtCost(g.cost) + '</strong> a do hlavního běhu vrátil výsledek o ~<strong>' +
+      fmtTok(retTok) + ' tokenech</strong> (' + nf.format(retChars) + ' znaků).' +
+      (per1k != null ? ' Cena za 1000 tokenů vráceného výsledku: <strong>' + fmtCost(per1k) + '</strong>.' : '') +
+      '</div>' +
+      '<div class="verdict ' + cls + '" style="margin-top:6px">' + verdict + '</div>' +
+    '</div>';
+}
+
+/* ---------- graf růstu kontextového okna ---------- */
+function renderCtxChart(a) {
+  const wrap = document.getElementById('ctx-chart');
+  const calls = a.data.calls;
+  if (!calls.length) { wrap.innerHTML = '<p class="note">Žádná volání API.</p>'; return; }
+
+  const W = Math.min(880, Math.max(420, wrap.clientWidth - 10)), H = 220;
+  const padL = 56, padR = 16, padT = 10, padB = 26;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const maxY = Math.max(...calls.map(c => c.ctx)) * 1.08 || 1;
+  const x = i => padL + (calls.length === 1 ? iw/2 : i / (calls.length - 1) * iw);
+  const y = v => padT + ih - v / maxY * ih;
+
+  let svg = '<svg id="ctx-svg" width="' + W + '" height="' + H + '" font-family="inherit" font-size="11">';
+  // mřížka + osy
+  const steps = 4;
+  for (let i = 0; i <= steps; i++) {
+    const v = maxY / steps * i, yy = y(v);
+    svg += '<line x1="' + padL + '" y1="' + yy + '" x2="' + (W-padR) + '" y2="' + yy +
+           '" stroke="' + cssColor('--grid') + '" stroke-width="1"></line>';
+    svg += '<text x="' + (padL - 6) + '" y="' + (yy + 4) + '" text-anchor="end" fill="' +
+           cssColor('--text-muted') + '" font-variant-numeric="tabular-nums">' + fmtTokShort(v) + '</text>';
+  }
+  svg += '<line x1="' + padL + '" y1="' + (padT+ih) + '" x2="' + (W-padR) + '" y2="' + (padT+ih) +
+         '" stroke="' + cssColor('--baseline') + '" stroke-width="1"></line>';
+  svg += '<text x="' + (padL + iw/2) + '" y="' + (H - 6) + '" text-anchor="middle" fill="' +
+         cssColor('--text-muted') + '">pořadí volání API (1–' + calls.length + ')</text>';
+
+  const pts = calls.map((c, i) => x(i).toFixed(1) + ',' + y(c.ctx).toFixed(1)).join(' ');
+  svg += '<polyline points="' + pts + '" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"></polyline>';
+  if (calls.length <= 60) {
+    calls.forEach((c, i) => {
+      svg += '<circle cx="' + x(i) + '" cy="' + y(c.ctx) + '" r="2.5" fill="var(--series-1)" stroke="' +
+             cssColor('--surface-1') + '" stroke-width="1.5"></circle>';
+    });
+  }
+  // crosshair
+  svg += '<line id="ctx-cross" x1="0" y1="' + padT + '" x2="0" y2="' + (padT+ih) +
+         '" stroke="' + cssColor('--baseline') + '" stroke-width="1" stroke-dasharray="3,3" visibility="hidden"></line>';
+  svg += '<circle id="ctx-dot" r="4" fill="var(--series-1)" stroke="' + cssColor('--surface-1') +
+         '" stroke-width="2" visibility="hidden"></circle>';
+  svg += '</svg>';
+  wrap.innerHTML = svg;
+
+  const svgEl = document.getElementById('ctx-svg');
+  const cross = document.getElementById('ctx-cross');
+  const dot = document.getElementById('ctx-dot');
+  svgEl.addEventListener('mousemove', e => {
+    const rect = svgEl.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    let best = 0, bd = Infinity;
+    calls.forEach((c, i) => { const d = Math.abs(x(i) - mx); if (d < bd) { bd = d; best = i; } });
+    const c = calls[best];
+    cross.setAttribute('x1', x(best)); cross.setAttribute('x2', x(best));
+    cross.setAttribute('visibility', 'visible');
+    dot.setAttribute('cx', x(best)); dot.setAttribute('cy', y(c.ctx));
+    dot.setAttribute('visibility', 'visible');
+    showTooltip(e,
+      '<div class="t-title">Volání #' + (best+1) + (c.ts ? ' · ' + new Date(c.ts).toLocaleTimeString('cs-CZ') : '') + '</div>' +
+      '<div class="row"><span>Kontextové okno</span><span>' + fmtTok(c.ctx) + '</span></div>' +
+      '<div class="row"><span>– z cache</span><span>' + fmtTok(c.cacheRead) + '</span></div>' +
+      '<div class="row"><span>– zápis do cache</span><span>' + fmtTok(c.c5m + c.c1h) + '</span></div>' +
+      '<div class="row"><span>– necachovaný vstup</span><span>' + fmtTok(c.input) + '</span></div>' +
+      '<div class="row"><span>Výstup</span><span>' + fmtTok(c.output) + '</span></div>' +
+      '<div class="row"><span>Cena volání</span><span>' + fmtCost(callCost(c.model, c)) + '</span></div>');
+  });
+  svgEl.addEventListener('mouseleave', () => {
+    cross.setAttribute('visibility', 'hidden');
+    dot.setAttribute('visibility', 'hidden');
+    hideTooltip();
+  });
+}
+
+/* ---------- konverzace ---------- */
+const MAX_MSGS = 400;
+function renderConversation(a) {
+  const wrap = document.getElementById('conversation');
+  wrap.innerHTML = '';
+  const msgs = a.data.messages;
+  const shown = msgs.length > MAX_MSGS ? msgs.slice(0, MAX_MSGS) : msgs;
+  // mapování id -> usage pro badge
+  const usageById = new Map();
+  for (const m of msgs) if (m.role === 'assistant' && m.id) usageById.set(m.id, null);
+  // calls jsou list bez id — přiřadíme podle pořadí asistentských zpráv
+  let ci = 0;
+  for (const m of msgs) {
+    if (m.role === 'assistant' && m.id && !usageById.get(m.id)) {
+      if (ci < a.data.calls.length) usageById.set(m.id, a.data.calls[ci++]);
+    }
+  }
+
+  const frag = document.createDocumentFragment();
+  for (const m of shown) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + m.role;
+    const who = m.role === 'user' ? 'Uživatel / nástroje' : 'Asistent' + (m.model ? ' (' + esc(shortModel(m.model)) + ')' : '');
+    const u = m.role === 'assistant' && m.id ? usageById.get(m.id) : null;
+    const badge = u ? '<span class="usage-badge">okno ' + fmtTokShort(u.ctx) + ' · výstup ' + fmtTok(u.output) + ' tok.</span>' : '';
+    const time = m.ts ? new Date(Date.parse(m.ts)).toLocaleTimeString('cs-CZ') : '';
+    div.innerHTML = '<div class="msg-head"><strong>' + who + '</strong><span>' + badge +
+                    (time ? ' <span class="note">' + time + '</span>' : '') + '</span></div>';
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    for (const b of m.blocks) body.appendChild(renderBlock(b, a));
+    div.appendChild(body);
+    frag.appendChild(div);
+  }
+  if (msgs.length > MAX_MSGS) {
+    const note = document.createElement('p');
+    note.className = 'note';
+    note.textContent = 'Zobrazeno prvních ' + MAX_MSGS + ' z ' + msgs.length + ' zpráv.';
+    frag.appendChild(note);
+  }
+  wrap.appendChild(frag);
+}
+
+function renderBlock(b, agent) {
+  const el = document.createElement('div');
+  const COLLAPSE = 600;
+  const detailsBlock = (summary, content) => {
+    const d = document.createElement('details');
+    d.className = 'block';
+    const s = document.createElement('summary');
+    s.textContent = summary;
+    const pre = document.createElement('pre');
+    pre.textContent = content;
+    d.appendChild(s); d.appendChild(pre);
+    return d;
+  };
+
+  switch (b.type) {
+    case 'text': {
+      const t = b.text || '';
+      if (t.length > 4000) {
+        el.appendChild(document.createTextNode(t.slice(0, 4000)));
+        el.appendChild(detailsBlock('… zobrazit zbytek (' + nf.format(t.length - 4000) + ' znaků)', t.slice(4000)));
+      } else {
+        el.textContent = t;
+      }
+      return el;
+    }
+    case 'thinking': {
+      const t = b.thinking || '';
+      if (!t) { el.innerHTML = '<span class="note">🧠 (skryté přemýšlení)</span>'; return el; }
+      return detailsBlock('🧠 Přemýšlení (' + nf.format(t.length) + ' znaků)', t);
+    }
+    case 'tool_use': {
+      const input = JSON.stringify(b.input, null, 2) || '';
+      const isAgent = b.name === 'Agent' || b.name === 'Task';
+      const label = '🔧 ' + b.name + (isAgent && b.input && b.input.description ? ' → „' + b.input.description + '"' : '');
+      if (input.length <= 200) {
+        el.innerHTML = '<span class="note">' + esc(label) + ' ' + esc(input) + '</span>';
+        return el;
+      }
+      return detailsBlock(label + ' – vstup (' + nf.format(input.length) + ' znaků)', input);
+    }
+    case 'tool_result': {
+      let text = '';
+      if (typeof b.content === 'string') text = b.content;
+      else if (Array.isArray(b.content)) text = b.content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+      const name = agent.data.toolUseNames.get(b.tool_use_id) || 'nástroj';
+      const label = (b.is_error ? '⚠️ Chybný výsledek' : '📥 Výsledek') + ' – ' + name;
+      if (text.length <= 200) {
+        el.innerHTML = '<span class="note">' + esc(label) + ': ' + esc(text) + '</span>';
+        return el;
+      }
+      return detailsBlock(label + ' (' + nf.format(text.length) + ' znaků ≈ ' + fmtTok(text.length/4) + ' tok.)', text);
+    }
+    case 'image': {
+      el.innerHTML = '<span class="note">🖼️ (obrázek)</span>';
+      return el;
+    }
+    default: {
+      el.innerHTML = '<span class="note">[' + esc(b.type || '?') + ']</span>';
+      return el;
+    }
+  }
+}
+
+/* ---------- tooltip ---------- */
+const tooltipEl = document.getElementById('tooltip');
+function showTooltip(e, html) {
+  tooltipEl.innerHTML = html;
+  tooltipEl.style.display = 'block';
+  const pad = 14;
+  let tx = e.clientX + pad, ty = e.clientY + pad;
+  const r = tooltipEl.getBoundingClientRect();
+  if (tx + r.width > window.innerWidth - 8) tx = e.clientX - r.width - pad;
+  if (ty + r.height > window.innerHeight - 8) ty = e.clientY - r.height - pad;
+  tooltipEl.style.left = tx + 'px';
+  tooltipEl.style.top = ty + 'px';
+}
+function hideTooltip() { tooltipEl.style.display = 'none'; }
+
+/* ---------- navigace ---------- */
+document.getElementById('back-to-sessions').addEventListener('click', () => {
+  document.getElementById('dashboard').classList.add('hidden');
+  document.getElementById('sessions-section').classList.remove('hidden');
+});
+</script>
+</body>
+</html>
