@@ -1,40 +1,40 @@
 # Claude Session Viewer
 
-Jednoduchá jednosouborová webová aplikace pro analýzu spotřeby tokenů a nákladů v transkriptech [Claude Code](https://claude.com/claude-code) sessions – včetně subagentů, které session spustila.
+A simple, single-file web app for analyzing token usage and cost in [Claude Code](https://claude.com/claude-code) session transcripts – including any subagents spawned during the session.
 
-Celá aplikace běží **pouze lokálně v prohlížeči** (žádný backend, žádné odesílání dat kamkoliv na server) – soubory se čtou přímo z disku pomocí File API prohlížeče.
+The whole app runs **entirely in your browser** (no backend, nothing is ever sent to a server) – files are read directly from disk using the browser's File API.
 
-## K čemu to je
+## What it's for
 
-Claude Code ukládá historii každé konverzace (session) jako `.jsonl` soubor a k ní i přepisy jednotlivých subagentů, které v rámci session vznikly. Tato aplikace tyto soubory načte a zobrazí:
+Claude Code stores the history of every conversation (session) as a `.jsonl` file, along with transcripts of any subagents spawned during that session. This app loads those files and shows:
 
-- **Přehled sessions** v dané projektové složce (název, datum, počet subagentů).
-- **Dashboard k session** – souhrnné dlaždice (celková cena, velikost kontextového okna, výstupní tokeny, cache čtení/zápis, počet subagentů).
-- **Graf ceny podle agenta a nákladové složky** (cache čtení/zápis, vstup, výstup) – skládaný pruhový graf s tooltipem.
-- **Tabulku agentů** (hlavní běh + subagenti) s počtem API volání, tokeny a odhadovanou cenou.
-- **Detail agenta** – graf růstu kontextového okna v čase, odhad přínosu subagenta (kolik tokenů "ušetřil" hlavnímu běhu) a procházení celé konverzace včetně nástrojových volání, výsledků a "thinking" bloků.
+- **Session overview** for a given project folder (title, date, number of subagents).
+- **Session dashboard** – summary tiles (total cost, context window size, output tokens, cache read/write, number of subagents).
+- **Cost breakdown chart by agent and cost component** (cache read/write, input, output) – a stacked bar chart with tooltips.
+- **Agent table** (main run + subagents) with API call counts, tokens, and estimated cost.
+- **Agent detail view** – a chart of context window growth over time, an estimate of how much a subagent "saved" the main run's context, and a full browsable conversation including tool calls, tool results, and "thinking" blocks.
 
-Ceny jsou orientační přepočet podle veřejného ceníku Anthropic API (USD/1M tokenů) – u předplatného Claude Code se tokeny neúčtují přímo, čísla slouží hlavně k porovnání nákladnosti jednotlivých běhů a subagentů.
+Costs are a rough estimate based on Anthropic's public API pricing (USD per 1M tokens) – with a Claude Code subscription, tokens aren't billed directly, so these numbers are mainly useful for comparing the relative cost of different runs and subagents.
 
-## Jak to spustit
+## How to run it
 
-Není potřeba žádná instalace ani build – stačí otevřít `claude-token-viewer.html` přímo v prohlížeči (dvojklikem, nebo `File > Open`).
+No installation or build step needed – just open `claude-token-viewer.html` directly in a browser (double-click it, or use `File > Open`).
 
-> Poznámka: Kvůli výběru celé složky (`webkitdirectory`) funguje nejlépe v prohlížečích založených na Chromiu (Chrome, Edge, Brave...).
+> Note: Because it uses folder selection (`webkitdirectory`), it works best in Chromium-based browsers (Chrome, Edge, Brave...).
 
-### Použití
+### Usage
 
-1. Otevři `claude-token-viewer.html` v prohlížeči.
-2. Klikni na **📁 Vybrat složku projektu** a vyber složku konkrétního projektu z `~/.claude/projects/<název-projektu>` (na Windows typicky `C:\Users\<uživatel>\.claude\projects\<název-projektu>`).
-3. Aplikace najde všechny hlavní `*.jsonl` soubory (sessions) v této složce a k nim příslušné podsložky `<session>/subagents/` s přepisy subagentů.
-4. Klikni na session ze seznamu → zobrazí se dashboard s náklady, grafy a tabulkou agentů.
-5. Klikni na řádek agenta v tabulce → zobrazí se detail včetně grafu růstu kontextového okna a celé konverzace.
+1. Open `claude-token-viewer.html` in your browser.
+2. Click **📁 Select project folder** and pick a specific project folder from `~/.claude/projects/<project-name>` (on Windows typically `C:\Users\<user>\.claude\projects\<project-name>`).
+3. The app finds all the main `*.jsonl` files (sessions) in that folder, along with their `<session>/subagents/` subfolders containing subagent transcripts.
+4. Click a session in the list to see its dashboard with costs, charts, and the agent table.
+5. Click an agent row in the table to see its detail view, including the context window growth chart and the full conversation.
 
-## Technologie
+## Technology
 
-Čistý HTML/CSS/JavaScript bez závislostí a bez buildovacího kroku – jeden soubor, který si stačí stáhnout a otevřít.
+Plain HTML/CSS/JavaScript with no dependencies and no build step – a single file you can just download and open.
 
 ## Screenshot
 
-<!-- Sem prosím vlož screenshot aplikace, např.: -->
+<!-- Add a screenshot of the app here, e.g.: -->
 <!-- ![Screenshot](screenshot.png) -->
